@@ -1,0 +1,83 @@
+    1|       |/* Jacobi-3 program */
+    2|       |
+    3|       |#include <math.h>
+    4|       |#include <stdio.h>
+    5|       |
+    6|  3.15G|#define Max(a, b) ((a) > (b) ? (a) : (b))
+    7|       |
+    8|  6.59G|#define L 400
+    9|     51|#define ITMAX 50
+   10|       |
+   11|       |int i, j, k, it;
+   12|       |double eps;
+   13|       |double MAXEPS = 0.5;
+   14|       |
+   15|       |FILE *f;
+   16|       |
+   17|       |/* 3D arrays block distributed along 3 dimensions */
+   18|       |#pragma dvm array distribute[block][block][block]
+   19|       |double A[L][L][L];
+   20|       |#pragma dvm array align([i][j][k] with A[i][j][k])
+   21|       |double B[L][L][L];
+   22|       |
+   23|       |int main(int an, char **as)
+   24|      1|{
+   25|      1|    #pragma dvm region
+   26|      1|    {
+   27|       |    /* 3D parallel loop with base array A */
+   28|      1|    #pragma dvm parallel([i][j][k] on A[i][j][k]) cuda_block(256)
+   29|    401|    for (i = 0; i < L; i++)
+   30|   160k|        for (j = 0; j < L; j++)
+   31|  64.1M|            for (k = 0; k < L; k++)
+   32|  64.0M|            {
+   33|  64.0M|                A[i][j][k] = 0;
+   34|  64.0M|                if (i == 0 || j == 0 || k == 0 || i == L - 1 || j == L - 1 || k == L - 1)
+   35|   955k|                    B[i][j][k] = 0;
+   36|  63.0M|                else
+   37|  63.0M|                    B[i][j][k] = 4 + i + j + k;
+   38|  64.0M|            }
+   39|      1|    }
+   40|       |
+   41|       |    /* iteration loop */
+   42|     51|    for (it = 1; it <= ITMAX; it++)
+   43|     50|    {
+   44|     50|        eps = 0;
+   45|     50|        #pragma dvm actual(eps)
+   46|       |
+   47|     50|        #pragma dvm region
+   48|     50|        {
+   49|       |        /* Parallel loop with base array A */
+   50|       |        /* calculating maximum in variable eps */
+   51|     50|        #pragma dvm parallel([i][j][k] on A[i][j][k]) reduction(max(eps)), cuda_block(256)
+   52|  19.9k|        for (i = 1; i < L - 1; i++)
+   53|  7.94M|            for (j = 1; j < L - 1; j++)
+   54|  3.16G|                for (k = 1; k < L - 1; k++)
+   55|  3.15G|                {
+   56|  3.15G|                    double tmp = fabs(B[i][j][k] - A[i][j][k]);
+   57|  3.15G|                    eps = Max(tmp, eps);
+   58|  3.15G|                    A[i][j][k] = B[i][j][k];
+   59|  3.15G|                }
+   60|       |
+   61|       |        /* Parallel loop with base array B and */
+   62|       |        /* with prior updating shadow elements of array A */
+   63|     50|        #pragma dvm parallel([i][j][k] on B[i][j][k]) shadow_renew(A), cuda_block(256)
+   64|  19.9k|        for (i = 1; i < L - 1; i++)
+   65|  7.94M|            for (j = 1; j < L - 1; j++)
+   66|  3.16G|                for (k = 1; k < L - 1; k++)
+   67|  3.15G|                    B[i][j][k] = (A[i - 1][j][k] + A[i][j - 1][k] + A[i][j][k - 1] + A[i][j][k + 1] + A[i][j + 1][k] + A[i + 1][j][k]) / 6.0;
+   68|     50|        }
+   69|       |
+   70|     50|        #pragma dvm get_actual(eps)
+   71|     50|        printf("it=%4i   eps=%e\n", it, eps);
+   72|     50|        if (eps < MAXEPS)
+   73|      0|            break;
+   74|     50|    }
+   75|       |
+   76|      1|    f = fopen("jacobi.dat", "wb");
+   77|      1|    #pragma dvm get_actual(B)
+   78|      1|    fwrite(B, sizeof(double), L * L * L, f);
+   79|      1|    fclose(f);
+   80|       |
+   81|      1|    return 0;
+   82|      1|}
+
